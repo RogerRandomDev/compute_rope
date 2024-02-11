@@ -5,7 +5,10 @@ signal update_player_position_for_ropes(pos:Vector2,range:float,force:float)
 signal light_map_updated
 var sema=Semaphore.new()
 var thread:Thread=Thread.new()
+#larger numbers start breaking down the movements for some reason.
 const rope_sim_speed:int=30
+
+#this means that only half the updates are grabbed from the gpu. same sim speed, so same quality, just half the strain on conversations and half the visual updates
 var half_update_speed:bool=false
 
 var player_:Node=null
@@ -28,7 +31,6 @@ func _ready():
 		false,
 		"res://Assets/Resources/compute_rope.glsl"
 	)
-	initialize_light()
 
 
 
@@ -141,11 +143,6 @@ var computing_for_data:Array=[]
 var t=0.0
 var compute_amount:int=1
 
-func _process(delta):
-	if run_light:light_update()
-	if len(computing_for)==0:return
-	t+=delta
-
 
 
 var detail_level:float=0.0
@@ -196,151 +193,3 @@ func rope_repulse_from(rope_pos,rope_range,rope_force)->void:
 	]).to_byte_array()
 	)
 	current_forces_applied+=1
-
-
-#region light mapping compute
-var light_compute:ComputeResource
-var uniform_light_inputs
-var light_input
-var light_uniforms:Array=[]
-
-
-
-func initialize_light()->void:
-	light_compute=ComputeResource.new(
-		true,
-		"res://Assets/Resources/compute_light.glsl"
-	)
-	create_img()
-
-var light_texture
-
-
-func update_lighting_map(lightmap_texture:Image)->void:
-	run_light=false
-	current_shadow_mask_data=lightmap_texture.get_data()
-	if light_texture.texture_rd_rid.is_valid():
-		light_texture.texture_rd_rid=RID()
-	var map_size=lightmap_texture.get_size()
-	var map_format=light_compute.replace_format(0,light_compute.create_texture_format(
-		map_size.x,map_size.y,1,RenderingDevice.TEXTURE_USAGE_STORAGE_BIT+RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT+RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT+RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT,
-		RenderingDevice.TEXTURE_TYPE_2D,
-		RenderingDevice.DATA_FORMAT_R8_UNORM
-	)
-	)
-	var light_map_format=light_compute.replace_format(1,light_compute.create_texture_format(
-		map_size.x*32,map_size.y*32,1,RenderingDevice.TEXTURE_USAGE_STORAGE_BIT+RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT+RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT+RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT+RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT,
-		RenderingDevice.TEXTURE_TYPE_2D,
-		RenderingDevice.DATA_FORMAT_R8G8B8A8_UNORM
-	)
-	)
-	
-	var map_buffer=light_compute.replace_buffer(
-		0,
-		light_compute.create_texture_filled(map_format,[lightmap_texture.get_data()])
-		)
-	
-	var v=PackedByteArray()
-	v.resize(1792)
-	v.fill(0)
-	var input_lights=light_compute.replace_buffer(
-		1,light_compute.create_storage_buffer_filled(1792,v)
-		)
-	light_input=input_lights
-	
-	
-	var img=Image.create(map_size.x*32,map_size.y*32,false,Image.FORMAT_RGBA8)
-	img.fill(Color(0,0,0,0))
-	var pre_filled:PackedByteArray=img.get_data()
-	
-	var light_map_buffer=light_compute.replace_buffer(
-		2,light_compute.create_texture_filled(light_map_format,[pre_filled])
-		)
-	var light_map_other_buffer=light_compute.replace_buffer(
-		3,light_compute.create_texture_filled(light_map_format,[pre_filled])
-		)
-	var map_uniform=light_compute.replace_uniform(
-		0,light_compute.create_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE,0,[map_buffer])
-		)
-	var light_uniform=light_compute.replace_uniform(
-		1,light_compute.create_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE,0,[light_map_buffer])
-		)
-	var light_other_uniform=light_compute.replace_uniform(
-		2,light_compute.create_uniform(RenderingDevice.UNIFORM_TYPE_IMAGE,0,[light_map_other_buffer])
-		)
-	var light_buff_uni=light_compute.replace_uniform(
-		3,light_compute.create_uniform(RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER,0,[input_lights])
-		)
-	
-	var uniform_set=light_compute.replace_uniform_set(
-		0,light_compute.create_uniform_set([map_uniform],0)
-		)
-	var uniform_set_light_a=light_compute.replace_uniform_set(
-		1,light_compute.create_uniform_set([light_uniform],1)
-		)
-	var uniform_set_light_b=light_compute.replace_uniform_set(
-		2,light_compute.create_uniform_set([light_other_uniform],1)
-		)
-	
-	
-	
-	uniform_light_inputs=light_compute.replace_uniform_set(
-		3,
-		light_compute.create_uniform_set([light_buff_uni],2)
-		)
-	light_uniforms=[
-		uniform_set_light_a,
-		uniform_set_light_b,
-		uniform_set,
-		uniform_light_inputs
-	]
-	
-	light_compute.set_uniform_used_order([uniform_set,uniform_set_light_a,uniform_light_inputs])
-	
-	#light_compute.set_thread_dimensions(floor(map_size.x),floor(map_size.y))
-	light_compute.set_thread_dimensions(40,24)
-	#compute_resource.set_thread_dimensions(8,8)
-	#update_img()
-	var constants=PackedByteArray()
-	constants.resize(16)
-	if get_viewport().get_camera_2d().has_method("get_constant"):
-		light_compute.set_constants(get_viewport().get_camera_2d().get_constant())
-	else:
-		light_compute.set_constants(constants)
-	
-	light_compute.run_count=0
-	light_compute.run_compute(update_img)
-	#light_compute.run_compute(update_img)
-	light_map_updated.emit()
-	
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
-	
-	run_light=true
-	
-
-var run_light:bool=false
-var current_shadow_mask_data:PackedByteArray=PackedByteArray([])
-
-func light_update()->void:
-	if run_light:
-		light_compute.run_compute(update_img)
-		if !get_tree().current_scene.get_node("Sprite2D").visible&&light_compute.run_count%2==1:
-			get_tree().current_scene.get_node("Sprite2D").set_deferred('visible',true)
-
-
-
-func create_img():
-	var t:=Texture2DRD.new()
-	light_texture=t
-	get_tree().current_scene.get_node("Sprite2D").texture=light_texture
-
-func update_img():
-	var ord=(light_compute.run_count)%2
-	light_compute.set_uniform_used_order([0,ord+1,3])
-	light_texture.texture_rd_rid=light_compute.get_buffer(ord+2)
-
-
-#endregion
-
