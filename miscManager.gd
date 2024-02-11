@@ -29,7 +29,7 @@ func _ready():
 	
 	compute_resource=ComputeResource.new(
 		false,
-		"res://Assets/Resources/compute_rope.glsl"
+		"res://compute_rope.glsl"
 	)
 
 
@@ -40,7 +40,7 @@ func _ready():
 
 #region rope compute management
 var rd := RenderingServer.create_local_rendering_device()
-var rope_shader_file := load("res://Assets/Resources/compute_rope.glsl")
+var rope_shader_file := load("res://compute_rope.glsl")
 var rope_spirv: RDShaderSPIRV = rope_shader_file.get_spirv()
 var rope_shader := rd.shader_create_from_spirv(rope_spirv)
 
@@ -49,7 +49,7 @@ var pipeline
 var forces=PackedByteArray([]);var current_forces_applied:int=0
 var do_process:bool=true;var total_segments:int=0
 
-
+##collision_tex should be an r8 image
 func load_rope_compute(full_rope_count:Array,collision_tex:Image)->void:
 	while sema.try_wait():continue
 	do_process=false
@@ -59,7 +59,10 @@ func load_rope_compute(full_rope_count:Array,collision_tex:Image)->void:
 	var data:=PackedByteArray([
 	])
 	var returned:=PackedByteArray([])
-	detail_level=ProjectSettings.get_setting("performance/rope_quality")
+	#detail_level=ProjectSettings.get_setting("performance/rope_quality")
+	#the code in front would be used if you want to be able to disable the lighting
+	detail_level=1
+
 	data.append_array(PackedFloat32Array([(2.0/float(rope_sim_speed)),1.0,detail_level,0.0]).to_byte_array())
 	data.resize(512)
 	current_forces_applied=0
